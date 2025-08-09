@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Discord Server Mirror</title>
+    <link rel="stylesheet" href="style.css">
 </head>
 <body>
     <h1>Discord Servers</h1>
@@ -15,9 +16,11 @@
             .then(data => {
                 const serverList = document.getElementById('server-list');
                 data.forEach(server => {
-                    const serverElement = document.createElement('p');
-                    serverElement.textContent = server.name;
-                    serverList.appendChild(serverElement);
+                    const serverLink = document.createElement('a');
+                    serverLink.href = `guild.html?id=${server.id}`;
+                    serverLink.className = 'server-link';
+                    serverLink.textContent = server.name;
+                    serverList.appendChild(serverLink);
                 });
             })
             .catch(error => console.error('Error fetching servers:', error));
