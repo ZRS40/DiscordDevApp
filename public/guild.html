@@ -40,7 +40,7 @@
                 availablePermissions = perms;
                 populatePermissionsCheckboxes();
                 populateChannelPermsGrid();
-            });
+        });
 
         if (guildId) {
             fetch(`/api/guilds/${guildId}`)
@@ -436,6 +436,10 @@
         function closeChannelPermsModal() {
             channelPermsModal.style.display = 'none';
         }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            populateChannelPermsGrid();
+        });
 
         channelPermsForm.addEventListener('submit', handleSaveChannelPerms);
         cancelChannelPermsBtn.addEventListener('click', closeChannelPermsModal);
