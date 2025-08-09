@@ -1,4 +1,5 @@
 const express = require('express');
+const { PermissionsBitField } = require('discord.js');
 const client = require('../bot/bot.js');
 const app = express();
 const port = 3000;
@@ -23,15 +24,36 @@ app.get('/api/guilds/:id', (req, res) => {
     }
 
     const roles = guild.roles.cache.map(role => {
-        return { id: role.id, name: role.name, color: role.hexColor };
+        return {
+            id: role.id,
+            name: role.name,
+            color: role.hexColor,
+            permissions: role.permissions.bitfield.toString()
+        };
     }).sort((a, b) => b.position - a.position);
 
     const allChannels = guild.channels.cache;
 
-    // Separate channels into categories and others
+    const getChannelOverwrites = (channel) => {
+        return channel.permissionOverwrites.cache
+            .filter(o => o.type === 0) // type 0 for roles
+            .map(o => ({
+                id: o.id,
+                allow: o.allow.bitfield.toString(),
+                deny: o.deny.bitfield.toString()
+            }));
+    };
+
+    // Process categories and their channels
     const categories = allChannels
         .filter(c => c.type === 4 /* GuildCategory */)
-        .map(c => ({ id: c.id, name: c.name, channels: [], position: c.rawPosition }))
+        .map(c => ({
+            id: c.id,
+            name: c.name,
+            position: c.rawPosition,
+            permissionOverwrites: getChannelOverwrites(c),
+            channels: [],
+        }))
         .sort((a, b) => a.position - b.position);
 
     const channelsWithoutCategory = [];
@@ -40,11 +62,17 @@ app.get('/api/guilds/:id', (req, res) => {
         .filter(c => c.type !== 4 /* GuildCategory */)
         .sort((a, b) => a.rawPosition - b.rawPosition)
         .forEach(channel => {
+            const channelData = {
+                id: channel.id,
+                name: channel.name,
+                type: channel.type,
+                permissionOverwrites: getChannelOverwrites(channel)
+            };
             const category = categories.find(c => c.id === channel.parentId);
             if (category) {
-                category.channels.push({ id: channel.id, name: channel.name, type: channel.type });
+                category.channels.push(channelData);
             } else {
-                channelsWithoutCategory.push({ id: channel.id, name: channel.name, type: channel.type });
+                channelsWithoutCategory.push(channelData);
             }
         });
 
@@ -63,6 +91,14 @@ app.get('/api/guilds/:id', (req, res) => {
         roles: roles,
         channels: structuredChannels
     });
+});
+
+app.get('/api/permissions', (req, res) => {
+    const permissions = {};
+    for (const [key, value] of Object.entries(PermissionsBitField.Flags)) {
+        permissions[key] = value.toString();
+    }
+    res.json(permissions);
 });
 
 // Create a new role
@@ -150,6 +186,47 @@ app.delete('/api/guilds/:id/roles/:roleId', async (req, res) => {
         res.status(500).json({ error: 'Failed to delete role', details: error.message });
     }
 });
+
+// Update/Create a permission overwrite for a role on a channel
+app.put('/api/guilds/:guildId/channels/:channelId/permissions/:roleId', async (req, res) => {
+    try {
+        const guild = await client.guilds.fetch(req.params.guildId);
+        if (!guild) return res.status(404).json({ error: 'Guild not found' });
+
+        const channel = await guild.channels.fetch(req.params.channelId);
+        if (!channel) return res.status(404).json({ error: 'Channel not found' });
+
+        const { allow, deny } = req.body;
+        await channel.permissionOverwrites.edit(req.params.roleId, {
+            allow: BigInt(allow),
+            deny: BigInt(deny)
+        });
+
+        res.json({ success: true });
+    } catch (error) {
+        console.error('Error updating permission overwrite:', error);
+        res.status(500).json({ error: 'Failed to update permission overwrite', details: error.message });
+    }
+});
+
+// Delete a permission overwrite for a role on a channel
+app.delete('/api/guilds/:guildId/channels/:channelId/permissions/:roleId', async (req, res) => {
+    try {
+        const guild = await client.guilds.fetch(req.params.guildId);
+        if (!guild) return res.status(404).json({ error: 'Guild not found' });
+
+        const channel = await guild.channels.fetch(req.params.channelId);
+        if (!channel) return res.status(404).json({ error: 'Channel not found' });
+
+        await channel.permissionOverwrites.delete(req.params.roleId);
+
+        res.status(204).send();
+    } catch (error) {
+        console.error('Error deleting permission overwrite:', error);
+        res.status(500).json({ error: 'Failed to delete permission overwrite', details: error.message });
+    }
+});
+
 
 app.listen(port, () => {
     console.log(`Server listening at http://localhost:${port}`);

@@ -26,17 +26,30 @@
         const guildNameElement = document.getElementById('guild-name');
         const rolesList = document.getElementById('roles-list');
         const channelsList = document.getElementById('channels-list');
-
         const urlParams = new URLSearchParams(window.location.search);
         const guildId = urlParams.get('id');
+
+        let availablePermissions = {};
+        let guildRoles = new Map();
+        let guildChannels = new Map();
+
+        // Fetch all available permissions once on page load
+        fetch('/api/permissions')
+            .then(res => res.json())
+            .then(perms => {
+                availablePermissions = perms;
+                populatePermissionsCheckboxes();
+                populateChannelPermsGrid();
+            });
 
         if (guildId) {
             fetch(`/api/guilds/${guildId}`)
                 .then(response => response.json())
                 .then(data => {
                     guildNameElement.textContent = data.name;
+                    guildRoles = new Map(data.roles.map(role => [role.id, role]));
 
-                    data.roles.forEach(role => {
+                    guildRoles.forEach(role => {
                         const listItem = document.createElement('li');
                         listItem.dataset.roleId = role.id;
                         listItem.draggable = true;
@@ -51,8 +64,6 @@
                         editBtn.textContent = '✏️';
                         editBtn.className = 'icon-btn edit-role-btn';
                         editBtn.dataset.roleId = role.id;
-                        editBtn.dataset.roleName = role.name;
-                        editBtn.dataset.roleColor = role.color;
 
                         const deleteBtn = document.createElement('button');
                         deleteBtn.textContent = '🗑️';
@@ -77,52 +88,81 @@
                     // Clear the list first
                     channelsList.innerHTML = '';
 
+                    // Map all channels and categories by ID
+                    data.channels.forEach(cat => {
+                        if (cat.id) guildChannels.set(cat.id, { ...cat, isCategory: true });
+                        cat.channels.forEach(chan => guildChannels.set(chan.id, chan));
+                    });
+
+
+                    const createChannelElement = (channel, isCategory = false) => {
+                        const element = document.createElement(isCategory ? 'h3' : 'li');
+                        element.className = isCategory ? 'category-header' : '';
+
+                        const nameSpan = document.createElement('span');
+                        let prefix = '';
+                        if (!isCategory) {
+                             if (channel.type === 2) prefix = '🔊 ';
+                             else if (channel.type === 13) prefix = '🎤 ';
+                             else if (channel.type === 15) prefix = '📰 ';
+                             else prefix = '# ';
+                        }
+                        nameSpan.textContent = prefix + channel.name.toUpperCase();
+                        element.appendChild(nameSpan);
+
+                        if (channel.id) { // Don't add button for "No Category"
+                            const permsBtn = document.createElement('button');
+                            permsBtn.textContent = '⚙️';
+                            permsBtn.className = 'icon-btn channel-perms-btn';
+                            permsBtn.dataset.channelId = channel.id;
+                            permsBtn.title = 'Edit Permissions';
+                            element.appendChild(permsBtn);
+                        }
+                        return element;
+                    }
+
                     data.channels.forEach(category => {
-                        const categoryHeader = document.createElement('h3');
-                        categoryHeader.className = 'category-header';
-                        categoryHeader.textContent = category.name.toUpperCase();
-                        channelsList.appendChild(categoryHeader);
+                        // For categories with an ID, create the header element with a button
+                        if (category.id) {
+                            const categoryHeader = createChannelElement(category, true);
+                            channelsList.appendChild(categoryHeader);
+                        } else {
+                            // For "No Category", just a simple header
+                             const categoryHeader = document.createElement('h3');
+                             categoryHeader.className = 'category-header';
+                             categoryHeader.textContent = category.name.toUpperCase();
+                             channelsList.appendChild(categoryHeader);
+                        }
+
 
                         const channelSubList = document.createElement('ul');
                         category.channels.forEach(channel => {
-                            const listItem = document.createElement('li');
-                            // Add a prefix based on channel type
-                            let prefix = '# '; // Default for text
-                            if (channel.type === 2 /* GuildVoice */) {
-                                prefix = '🔊 ';
-                            } else if (channel.type === 13 /* GuildStageVoice */) {
-                                prefix = '🎤 ';
-                            } else if (channel.type === 15 /* GuildForum */) {
-                                prefix = '📰 ';
-                            }
-                            listItem.textContent = prefix + channel.name;
+                            const listItem = createChannelElement(channel, false);
                             channelSubList.appendChild(listItem);
                         });
                         channelsList.appendChild(channelSubList);
+                    });
+
+                    // Add event listener for the new channel perms buttons
+                    document.querySelectorAll('.channel-perms-btn').forEach(btn => {
+                        btn.addEventListener('click', handleOpenChannelPermsModal);
                     });
                 })
                 .catch(error => console.error('Error fetching guild details:', error));
         }
 
-        async function handleCreateRole() {
-            const roleName = prompt('Enter the name for the new role:');
-            if (!roleName) return;
+        function handleOpenCreateModal() {
+            modalTitle.textContent = 'Create Role';
+            editForm.reset(); // Clears all form fields
+            roleIdInput.value = ''; // Ensure ID is empty for creation
+            permissionsListDiv.querySelectorAll('input[type="checkbox"]').forEach(checkbox => {
+                checkbox.checked = false;
+            });
+            modal.style.display = 'flex';
+        }
 
-            try {
-                const response = await fetch(`/api/guilds/${guildId}/roles`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ name: roleName })
-                });
-                if (response.ok) {
-                    location.reload();
-                } else {
-                    const error = await response.json();
-                    alert(`Error creating role: ${error.details || error.error}`);
-                }
-            } catch (err) {
-                alert(`An error occurred: ${err.message}`);
-            }
+        async function handleCreateRole() {
+            handleOpenCreateModal();
         }
 
         async function handleDeleteRole(event) {
@@ -146,17 +186,61 @@
 
         // --- Edit Role Modal Logic ---
         const modal = document.getElementById('edit-role-modal');
+        const modalTitle = document.getElementById('modal-title');
         const editForm = document.getElementById('edit-role-form');
         const cancelBtn = document.getElementById('cancel-edit-btn');
         const roleIdInput = document.getElementById('edit-role-id');
         const roleNameInput = document.getElementById('edit-role-name');
         const roleColorInput = document.getElementById('edit-role-color');
+        const permissionsListDiv = document.getElementById('permissions-list');
+        const tabButtons = document.querySelectorAll('.tab-btn');
+        const tabContents = document.querySelectorAll('.tab-content');
+
+        function populatePermissionsCheckboxes() {
+            permissionsListDiv.innerHTML = '';
+            for (const [key, value] of Object.entries(availablePermissions)) {
+                const item = document.createElement('div');
+                item.className = 'permission-item';
+                const checkbox = document.createElement('input');
+                checkbox.type = 'checkbox';
+                checkbox.id = `perm-${key}`;
+                checkbox.dataset.permissionValue = value;
+                const label = document.createElement('label');
+                label.htmlFor = `perm-${key}`;
+                label.textContent = key.replace(/([A-Z])/g, ' $1').trim(); // Add spaces for readability
+
+                item.appendChild(checkbox);
+                item.appendChild(label);
+                permissionsListDiv.appendChild(item);
+            }
+        }
+
+        tabButtons.forEach(button => {
+            button.addEventListener('click', () => {
+                tabButtons.forEach(btn => btn.classList.remove('active'));
+                button.classList.add('active');
+                tabContents.forEach(content => content.classList.remove('active'));
+                document.getElementById(`${button.dataset.tab}-tab`).classList.add('active');
+            });
+        });
 
         function handleOpenEditModal(event) {
-            const btn = event.currentTarget;
-            roleIdInput.value = btn.dataset.roleId;
-            roleNameInput.value = btn.dataset.roleName;
-            roleColorInput.value = btn.dataset.roleColor;
+            const roleId = event.currentTarget.dataset.roleId;
+            const role = guildRoles.get(roleId);
+            if (!role) return;
+
+            modalTitle.textContent = 'Edit Role';
+            roleIdInput.value = role.id;
+            roleNameInput.value = role.name;
+            roleColorInput.value = role.color;
+
+            // Set permissions
+            const currentPermissions = BigInt(role.permissions);
+            permissionsListDiv.querySelectorAll('input[type="checkbox"]').forEach(checkbox => {
+                const permValue = BigInt(checkbox.dataset.permissionValue);
+                checkbox.checked = (currentPermissions & permValue) === permValue;
+            });
+
             modal.style.display = 'flex';
         }
 
@@ -164,17 +248,33 @@
             modal.style.display = 'none';
         }
 
-        async function handleUpdateRole(event) {
+        async function handleSaveRole(event) {
             event.preventDefault();
             const roleId = roleIdInput.value;
-            const roleName = roleNameInput.value;
-            const roleColor = roleColorInput.value;
+            const isCreating = !roleId;
+
+            const roleData = {
+                name: roleNameInput.value,
+                color: roleColorInput.value,
+                permissions: (() => {
+                    let perms = 0n;
+                    permissionsListDiv.querySelectorAll('input[type="checkbox"]:checked').forEach(checkbox => {
+                        perms |= BigInt(checkbox.dataset.permissionValue);
+                    });
+                    return perms.toString();
+                })()
+            };
+
+            const url = isCreating
+                ? `/api/guilds/${guildId}/roles`
+                : `/api/guilds/${guildId}/roles/${roleId}`;
+            const method = isCreating ? 'POST' : 'PATCH';
 
             try {
-                const response = await fetch(`/api/guilds/${guildId}/roles/${roleId}`, {
-                    method: 'PATCH',
+                const response = await fetch(url, {
+                    method: method,
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ name: roleName, color: roleColor })
+                    body: JSON.stringify(roleData)
                 });
 
                 if (response.ok) {
@@ -182,7 +282,8 @@
                     location.reload();
                 } else {
                     const error = await response.json();
-                    alert(`Error updating role: ${error.details || error.error}`);
+                    const action = isCreating ? 'creating' : 'updating';
+                    alert(`Error ${action} role: ${error.details || error.error}`);
                 }
             } catch (err) {
                 alert(`An error occurred: ${err.message}`);
@@ -190,8 +291,156 @@
         }
 
         // Add modal event listeners
-        editForm.addEventListener('submit', handleUpdateRole);
+        editForm.addEventListener('submit', handleSaveRole);
         cancelBtn.addEventListener('click', handleCloseEditModal);
+
+        // --- Channel Permissions Modal Logic ---
+        const channelPermsModal = document.getElementById('channel-perms-modal');
+        const channelPermsForm = document.getElementById('channel-perms-form');
+        const channelPermsChannelIdInput = document.getElementById('channel-perms-channel-id');
+        const channelPermsRoleSelect = document.getElementById('channel-perms-role-select');
+        const channelPermsListDiv = document.getElementById('channel-permissions-list');
+        const cancelChannelPermsBtn = document.getElementById('cancel-channel-perms-btn');
+        const resetChannelPermsBtn = document.getElementById('reset-channel-perms-btn');
+
+
+        function populateChannelPermsGrid() {
+            channelPermsListDiv.innerHTML = '';
+            // Add headers
+            const headers = ['', 'Allow', 'Deny', 'Inherit'];
+            headers.forEach(header => {
+                const headerEl = document.createElement('div');
+                headerEl.className = 'grid-header';
+                headerEl.textContent = header;
+                channelPermsListDiv.appendChild(headerEl);
+            });
+
+            for (const [key, value] of Object.entries(availablePermissions)) {
+                const permName = key.replace(/([A-Z])/g, ' $1').trim();
+                const permContainer = document.createElement('div');
+                permContainer.className = 'perm-channel-item';
+                permContainer.innerHTML = `
+                    <span>${permName}</span>
+                    <input type="radio" name="perm-${key}" value="allow" data-permission-value="${value}">
+                    <input type="radio" name="perm-${key}" value="deny" data-permission-value="${value}">
+                    <input type="radio" name="perm-${key}" value="inherit" checked>
+                `;
+                channelPermsListDiv.appendChild(permContainer);
+            }
+        }
+
+        function updateChannelPermsUI() {
+            const channelId = channelPermsChannelIdInput.value;
+            const roleId = channelPermsRoleSelect.value;
+            const channel = guildChannels.get(channelId);
+            if (!channel || !roleId) return;
+
+            const overwrite = channel.permissionOverwrites.find(o => o.id === roleId);
+            const allow = overwrite ? BigInt(overwrite.allow) : 0n;
+            const deny = overwrite ? BigInt(overwrite.deny) : 0n;
+
+            channelPermsListDiv.querySelectorAll('.perm-channel-item').forEach(item => {
+                const allowRadio = item.querySelector('input[value="allow"]');
+                const denyRadio = item.querySelector('input[value="deny"]');
+                const inheritRadio = item.querySelector('input[value="inherit"]');
+                const permValue = BigInt(allowRadio.dataset.permissionValue);
+
+                if ((allow & permValue) === permValue) {
+                    allowRadio.checked = true;
+                } else if ((deny & permValue) === permValue) {
+                    denyRadio.checked = true;
+                } else {
+                    inheritRadio.checked = true;
+                }
+            });
+        }
+
+
+        function handleOpenChannelPermsModal(event) {
+            const channelId = event.currentTarget.dataset.channelId;
+            const channel = guildChannels.get(channelId);
+            if (!channel) return;
+
+            document.getElementById('channel-perms-modal-title').textContent = `Permissions for ${channel.name}`;
+            channelPermsChannelIdInput.value = channelId;
+
+            // Populate role select
+            channelPermsRoleSelect.innerHTML = '';
+            guildRoles.forEach(role => {
+                const option = document.createElement('option');
+                option.value = role.id;
+                option.textContent = role.name;
+                channelPermsRoleSelect.appendChild(option);
+            });
+
+            updateChannelPermsUI();
+            channelPermsModal.style.display = 'flex';
+        }
+
+        async function handleSaveChannelPerms(event) {
+            event.preventDefault();
+            const channelId = channelPermsChannelIdInput.value;
+            const roleId = channelPermsRoleSelect.value;
+
+            let allow = 0n;
+            let deny = 0n;
+
+            channelPermsListDiv.querySelectorAll('.perm-channel-item').forEach(item => {
+                const permValue = BigInt(item.querySelector('input').dataset.permissionValue);
+                const checkedRadio = item.querySelector('input:checked');
+                if (checkedRadio.value === 'allow') {
+                    allow |= permValue;
+                } else if (checkedRadio.value === 'deny') {
+                    deny |= permValue;
+                }
+            });
+
+            try {
+                const response = await fetch(`/api/guilds/${guildId}/channels/${channelId}/permissions/${roleId}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ allow: allow.toString(), deny: deny.toString() })
+                });
+                if (response.ok) {
+                    location.reload();
+                } else {
+                    const err = await response.json();
+                    alert(`Error saving permissions: ${err.details || err.error}`);
+                }
+            } catch (err) {
+                alert(`An error occurred: ${err.message}`);
+            }
+        }
+
+        async function handleResetChannelPerms() {
+            const channelId = channelPermsChannelIdInput.value;
+            const roleId = channelPermsRoleSelect.value;
+
+            if (!confirm(`Are you sure you want to reset all permission overwrites for this role on this channel?`)) return;
+
+            try {
+                const response = await fetch(`/api/guilds/${guildId}/channels/${channelId}/permissions/${roleId}`, {
+                    method: 'DELETE'
+                });
+                if (response.ok) {
+                    location.reload();
+                } else {
+                    const err = await response.json();
+                    alert(`Error resetting permissions: ${err.details || err.error}`);
+                }
+            } catch (err) {
+                alert(`An error occurred: ${err.message}`);
+            }
+        }
+
+        function closeChannelPermsModal() {
+            channelPermsModal.style.display = 'none';
+        }
+
+        channelPermsForm.addEventListener('submit', handleSaveChannelPerms);
+        cancelChannelPermsBtn.addEventListener('click', closeChannelPermsModal);
+        resetChannelPermsBtn.addEventListener('click', handleResetChannelPerms);
+        channelPermsRoleSelect.addEventListener('change', updateChannelPermsUI);
 
 
         // --- Drag and Drop Role Reordering ---
@@ -259,16 +508,50 @@
 
     <div id="edit-role-modal" class="modal-backdrop" style="display: none;">
         <div class="modal-content">
-            <h2>Edit Role</h2>
+            <div class="modal-header">
+                <h2 id="modal-title">Edit Role</h2>
+                <div class="modal-tabs">
+                    <button class="tab-btn active" data-tab="general">General</button>
+                    <button class="tab-btn" data-tab="permissions">Permissions</button>
+                </div>
+            </div>
             <form id="edit-role-form">
                 <input type="hidden" id="edit-role-id">
-                <label for="edit-role-name">Role Name:</label>
-                <input type="text" id="edit-role-name" required>
-                <label for="edit-role-color">Role Color:</label>
-                <input type="color" id="edit-role-color">
+                <div class="tab-content active" id="general-tab">
+                    <label for="edit-role-name">Role Name:</label>
+                    <input type="text" id="edit-role-name" required>
+                    <label for="edit-role-color">Role Color:</label>
+                    <input type="color" id="edit-role-color">
+                </div>
+                <div class="tab-content" id="permissions-tab">
+                    <div id="permissions-list" class="permissions-grid"></div>
+                </div>
                 <div class="modal-actions">
                     <button type="submit">Save</button>
                     <button type="button" id="cancel-edit-btn">Cancel</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div id="channel-perms-modal" class="modal-backdrop" style="display: none;">
+        <div class="modal-content" style="width: 600px;">
+            <div class="modal-header">
+                <h2 id="channel-perms-modal-title">Channel Permissions</h2>
+            </div>
+            <form id="channel-perms-form">
+                <input type="hidden" id="channel-perms-channel-id">
+                <div class="channel-perms-role-selector">
+                     <label for="channel-perms-role-select">Role:</label>
+                     <select id="channel-perms-role-select"></select>
+                </div>
+                <div id="channel-permissions-list" class="permissions-grid-channel">
+                    <!-- Populated by JS -->
+                </div>
+                <div class="modal-actions">
+                    <button type="submit">Save</button>
+                    <button type="button" id="cancel-channel-perms-btn">Cancel</button>
+                    <button type="button" id="reset-channel-perms-btn" style="background-color: #f44336;">Reset Overwrites</button>
                 </div>
             </form>
         </div>
