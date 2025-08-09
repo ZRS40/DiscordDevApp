@@ -39,7 +39,8 @@
             .then(perms => {
                 availablePermissions = perms;
                 populatePermissionsCheckboxes();
-            });
+                populateChannelPermsGrid();
+        });
 
         if (guildId) {
             fetch(`/api/guilds/${guildId}`)
